@@ -39,6 +39,10 @@ auto main(int argc, char *argv[]) -> int {
 #ifdef _WIN32
     // Required on Windows to show IPA symbols
     SetConsoleOutputCP(CP_UTF8);
+    // Use binary mode for stdin/stdout so synthetic audio sent to the parent
+    // process is not mangled by text-mode stream translation.
+    _setmode(_fileno(stdin), _O_BINARY);
+    _setmode(_fileno(stdout), _O_BINARY);
 #endif
     piper_synthesizer *piper;
 

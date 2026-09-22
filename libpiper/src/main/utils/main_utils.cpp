@@ -29,6 +29,9 @@ void printUsage(char *argv[]) { // NOLINT(modernize-avoid-c-arrays)
   std::cerr << "   -d  DIR   --output_dir  DIR   path to output directory "
                "(default: cwd)"
             << '\n';
+  std::cerr << "   --output_raw              write raw 16-bit PCM instead of "
+               "WAV"
+            << '\n';
   std::cerr << "   -s  NUM   --speaker     NUM   id of speaker (default: 0)"
             << '\n';
   std::cerr
@@ -65,6 +68,7 @@ void ensureArg(int argc, char *argv[], int argi) {
 // NOLINTNEXTLINE(readability-function-cognitive-complexity,modernize-avoid-c-arrays)
 void parseArgsLogic(int argc, char *argv[], RunConfig &runConfig) {
   std::optional<std::filesystem::path> modelConfigPath;
+  bool hasOutputTarget = false;
 
   for (int i = 1; i < argc; i++) {
     std::string arg = argv[i];
@@ -78,6 +82,7 @@ void parseArgsLogic(int argc, char *argv[], RunConfig &runConfig) {
     } else if (arg == "-f" || arg == "--output_file" ||
                arg == "--output-file") {
       ensureArg(argc, argv, i);
+      hasOutputTarget = true;
       std::string filePath = argv[++i];
       if (filePath == "-") {
         runConfig.outputType = OUTPUT_STDOUT;
@@ -88,6 +93,7 @@ void parseArgsLogic(int argc, char *argv[], RunConfig &runConfig) {
       }
     } else if (arg == "-d" || arg == "--output_dir" || arg == "--output-dir") {
       ensureArg(argc, argv, i);
+      hasOutputTarget = true;
       runConfig.outputType = OUTPUT_DIRECTORY;
       runConfig.outputPath = std::filesystem::path(argv[++i]);
     } else if (arg == "-s" || arg == "--speaker") {
@@ -114,6 +120,8 @@ void parseArgsLogic(int argc, char *argv[], RunConfig &runConfig) {
       runConfig.g2pwModelDir = std::filesystem::path(argv[++i]);
     } else if (arg == "--json_input" || arg == "--json-input") {
       runConfig.jsonInput = true;
+    } else if (arg == "--output_raw" || arg == "--output-raw") {
+      runConfig.outputRaw = true;
     } else if (arg == "--version") {
       std::cout << piper_version() << '\n';
       exit(0);
@@ -121,6 +129,13 @@ void parseArgsLogic(int argc, char *argv[], RunConfig &runConfig) {
       printUsage(argv);
       exit(0);
     }
+  }
+
+  // If raw output requested without an explicit output target, default to
+  // writing raw 16-bit PCM to stdout (classic piper CLI behavior).
+  if (runConfig.outputRaw && !hasOutputTarget) {
+    runConfig.outputType = OUTPUT_STDOUT;
+    runConfig.outputPath = std::nullopt;
   }
 
   // Verify model file exists

@@ -32,6 +32,7 @@ struct RunConfig {
   std::optional<std::filesystem::path> dataDir;
   std::optional<std::filesystem::path> g2pwModelDir;
   bool jsonInput = false;
+  bool outputRaw = false;
 };
 
 struct ArgError : public std::runtime_error {

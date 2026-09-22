@@ -53,14 +53,18 @@ void processInputStream(piper::RunConfig &runConfig, piper_synthesizer *piper,
     if (outputType == piper::OUTPUT_DIRECTORY) {
       // Generate path using timestamp
       std::stringstream outputName;
-      outputName << timestamp << ".wav";
+      outputName << timestamp << (runConfig.outputRaw ? ".pcm" : ".wav");
       // NOLINTNEXTLINE(bugprone-unchecked-optional-access)
       std::filesystem::path outputPath = runConfig.outputPath.value();
       outputPath.append(outputName.str());
       {
-        // Output audio to automatically-named WAV file in a directory
+        // Output audio to automatically-named file in a directory
         std::ofstream audioFile(outputPath.string(), std::ios::binary);
-        textToWavFile(piper, &local_options, line.c_str(), audioFile);
+        if (runConfig.outputRaw) {
+          textToRawFile(piper, &local_options, line.c_str(), audioFile);
+        } else {
+          textToWavFile(piper, &local_options, line.c_str(), audioFile);
+        }
       } // audioFile is closed
       std::cout << outputPath.string() << '\n';
     } else if (outputType == piper::OUTPUT_FILE) {
@@ -81,14 +85,22 @@ void processInputStream(piper::RunConfig &runConfig, piper_synthesizer *piper,
         line = text.str();
       }
       {
-        // Output audio to WAV file
+        // Output audio to file
         std::ofstream audioFile(outputPath.string(), std::ios::binary);
-        textToWavFile(piper, &local_options, line.c_str(), audioFile);
+        if (runConfig.outputRaw) {
+          textToRawFile(piper, &local_options, line.c_str(), audioFile);
+        } else {
+          textToWavFile(piper, &local_options, line.c_str(), audioFile);
+        }
       } // audioFile is closed
       std::cout << outputPath.string() << '\n';
     } else if (outputType == piper::OUTPUT_STDOUT) {
-      // Output WAV to stdout
-      textToWavFile(piper, &local_options, line.c_str(), std::cout);
+      // Output audio to stdout
+      if (runConfig.outputRaw) {
+        textToRawFile(piper, &local_options, line.c_str(), std::cout);
+      } else {
+        textToWavFile(piper, &local_options, line.c_str(), std::cout);
+      }
     }
   } // for each line
 }

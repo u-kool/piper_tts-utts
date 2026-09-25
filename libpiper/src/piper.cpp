@@ -4,8 +4,10 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <limits>
 #include <unordered_map>
 
@@ -25,6 +27,52 @@
 #include <espeak-ng/speak_lib.h>
 
 using json = nlohmann::json;
+
+// espeak-ng data dir espeak is currently initialized with (process-global).
+// espeak keeps its phoneme tables in global state, so a voice that needs a
+// different data dir than the last phonemization requires re-initialization.
+static std::string g_active_espeak_data_path;
+
+// Phonemes emitted by the community ("utts") espeak-ng data for Russian that
+// the original espeak-ng data never produces. Their presence in a voice's
+// phoneme_id_map identifies voices trained with the utts data.
+static const std::vector<std::string> &utts_phoneme_markers() {
+  static const std::vector<std::string> markers{
+      "\xCA\xA6",         // ʦ (U+02A6)
+      "a\xCA\xAA",        // aɪ (U+026A)
+      "a\xCA\x8A",        // aʊ (U+028A)
+      "\xCA\x94\xCA\xAA", // ɔɪ (U+0254 + U+026A)
+      "e\xCA\xAA",        // eɪ
+      "o\xCA\x8A",        // oʊ
+  };
+  return markers;
+}
+
+static auto voice_needs_utts_espeak_data(const json &config) -> bool {
+  std::string espeak_voice;
+  if (config.contains("espeak") && config["espeak"].contains("voice")) {
+    espeak_voice = config["espeak"]["voice"].get<std::string>();
+  }
+  std::string language_code;
+  if (config.contains("language") && config["language"].contains("code")) {
+    language_code = config["language"]["code"].get<std::string>();
+  }
+  if (espeak_voice.rfind("ru", 0) != 0 && language_code.rfind("ru", 0) != 0) {
+    return false;
+  }
+  if (!config.contains("phoneme_id_map")) {
+    return false;
+  }
+  const auto &markers = utts_phoneme_markers();
+  for (const auto &item : config["phoneme_id_map"].items()) {
+    for (const auto &marker : markers) {
+      if (item.key() == marker) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
 
 auto piper_create_with_options(const piper_create_options *options)
     -> struct piper_synthesizer * {
@@ -95,14 +143,38 @@ auto piper_create_with_options(const piper_create_options *options)
     phoneme_type = config["phoneme_type"].get<PhonemeType>();
   }
 
-  if (phoneme_type == PhonemeType::Espeak &&
-      espeak_Initialize(AUDIO_OUTPUT_SYNCHRONOUS, 0, final_espeak_data_path,
-                        0) < 0) {
-    return nullptr;
+  if (phoneme_type == PhonemeType::Espeak) {
+    // Auto-select espeak-ng data for this voice. Original voices use the
+    // original data; community voices trained with the modified "utts" data
+    // carry phonemes the original data never emits, so they get
+    // espeak-ng-data_utts (sibling of the resolved data dir) when available.
+    std::string espeak_base =
+        (final_espeak_data_path != nullptr) ? final_espeak_data_path
+                                            : "espeak-ng-data";
+    while (!espeak_base.empty() && (espeak_base.back() == '/' ||
+                                    espeak_base.back() == '\\')) {
+      espeak_base.pop_back();
+    }
+    std::filesystem::path utts_data_path =
+        std::filesystem::path(espeak_base).parent_path() / "espeak-ng-data_utts";
+    std::error_code utts_exists_ec;
+    if (std::getenv("PIPER_NO_AUTO_ESPEAK") == nullptr &&
+        voice_needs_utts_espeak_data(config) &&
+        std::filesystem::exists(utts_data_path, utts_exists_ec)) {
+      espeak_base = utts_data_path.string();
+    }
+
+    if (espeak_Initialize(AUDIO_OUTPUT_SYNCHRONOUS, 0,
+                          espeak_base.empty() ? nullptr : espeak_base.c_str(),
+                          0) < 0) {
+      return nullptr;
+    }
+    g_active_espeak_data_path = espeak_base;
   }
 
   auto *synth = new piper_synthesizer();
   synth->phoneme_type = phoneme_type;
+  synth->espeak_data_dir = g_active_espeak_data_path;
 
   // Load config options
   synth->espeak_voice = "en-us"; // default
@@ -299,6 +371,7 @@ void piper_free(struct piper_synthesizer *synth) {
   }
   if (synth->phoneme_type == PhonemeType::Espeak) {
     espeak_Terminate();
+    g_active_espeak_data_path.clear();
   }
   delete synth;
 }
@@ -356,9 +429,23 @@ auto piper_synthesize_start(struct piper_synthesizer *synth, const char *text,
     return PIPER_ERR_GENERIC;
   }
 
-  if (synth->phoneme_type == PhonemeType::Espeak &&
-      espeak_SetVoiceByName(synth->espeak_voice.c_str()) != EE_OK) {
-    return PIPER_ERR_GENERIC;
+  if (synth->phoneme_type == PhonemeType::Espeak) {
+    if (g_active_espeak_data_path != synth->espeak_data_dir) {
+      // espeak-ng data is process-global: re-initialize when this voice needs
+      // a different data dir than the last phonemization.
+      espeak_Terminate();
+      if (espeak_Initialize(
+              AUDIO_OUTPUT_SYNCHRONOUS, 0,
+              synth->espeak_data_dir.empty() ? nullptr
+                                             : synth->espeak_data_dir.c_str(),
+              0) < 0) {
+        return PIPER_ERR_GENERIC;
+      }
+      g_active_espeak_data_path = synth->espeak_data_dir;
+    }
+    if (espeak_SetVoiceByName(synth->espeak_voice.c_str()) != EE_OK) {
+      return PIPER_ERR_GENERIC;
+    }
   }
 
   // Clear state
@@ -524,6 +611,14 @@ auto piper_synthesize_start(struct piper_synthesizer *synth, const char *text,
       if ((terminator & CLAUSE_TYPE_SENTENCE) == CLAUSE_TYPE_SENTENCE) {
         sentence_phonemes.emplace_back("");
         current_idx = sentence_phonemes.size() - 1;
+      }
+    }
+
+    if (std::getenv("PIPER_DEBUG_PHONEMES") != nullptr) {
+      for (const auto &phonemes_str : sentence_phonemes) {
+        if (!phonemes_str.empty()) {
+          std::cerr << "[piper] phonemes: " << phonemes_str << std::endl;
+        }
       }
     }
     break;

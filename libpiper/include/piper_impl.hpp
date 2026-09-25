@@ -70,6 +70,7 @@ NLOHMANN_JSON_SERIALIZE_ENUM(PhonemeType, {
 struct piper_synthesizer {
   // From config JSON file
   std::string espeak_voice;
+  std::string espeak_data_dir;
   int sample_rate;
   int num_speakers;
   PhonemeIdMap phoneme_id_map;

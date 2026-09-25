@@ -33,10 +33,10 @@ using json = nlohmann::json;
 // different data dir than the last phonemization requires re-initialization.
 static std::string g_active_espeak_data_path;
 
-// Phonemes emitted by the community ("utts") espeak-ng data for Russian that
-// the original espeak-ng data never produces. Their presence in a voice's
-// phoneme_id_map identifies voices trained with the utts data.
-static const std::vector<std::string> &utts_phoneme_markers() {
+// Phonemes emitted by the community espeak-ng data (github.com/mitrokun/espeak-ng-data)
+// for Russian that the original espeak-ng data never produces. Their presence in a
+// voice's phoneme_id_map identifies voices trained with that data.
+static const std::vector<std::string> &mitrokun_phoneme_markers() {
   static const std::vector<std::string> markers{
       "\xCA\xA6",         // ʦ (U+02A6)
       "a\xCA\xAA",        // aɪ (U+026A)
@@ -48,7 +48,7 @@ static const std::vector<std::string> &utts_phoneme_markers() {
   return markers;
 }
 
-static auto voice_needs_utts_espeak_data(const json &config) -> bool {
+static auto voice_needs_mitrokun_espeak_data(const json &config) -> bool {
   std::string espeak_voice;
   if (config.contains("espeak") && config["espeak"].contains("voice")) {
     espeak_voice = config["espeak"]["voice"].get<std::string>();
@@ -63,7 +63,7 @@ static auto voice_needs_utts_espeak_data(const json &config) -> bool {
   if (!config.contains("phoneme_id_map")) {
     return false;
   }
-  const auto &markers = utts_phoneme_markers();
+  const auto &markers = mitrokun_phoneme_markers();
   for (const auto &item : config["phoneme_id_map"].items()) {
     for (const auto &marker : markers) {
       if (item.key() == marker) {
@@ -145,9 +145,10 @@ auto piper_create_with_options(const piper_create_options *options)
 
   if (phoneme_type == PhonemeType::Espeak) {
     // Auto-select espeak-ng data for this voice. Original voices use the
-    // original data; community voices trained with the modified "utts" data
-    // carry phonemes the original data never emits, so they get
-    // espeak-ng-data_utts (sibling of the resolved data dir) when available.
+    // original data; community voices trained with the modified data from
+    // github.com/mitrokun/espeak-ng-data carry phonemes the original data
+    // never emits, so they get espeak-ng-data_mitrokun (sibling of the
+    // resolved data dir) when available.
     std::string espeak_base =
         (final_espeak_data_path != nullptr) ? final_espeak_data_path
                                             : "espeak-ng-data";
@@ -155,13 +156,13 @@ auto piper_create_with_options(const piper_create_options *options)
                                     espeak_base.back() == '\\')) {
       espeak_base.pop_back();
     }
-    std::filesystem::path utts_data_path =
-        std::filesystem::path(espeak_base).parent_path() / "espeak-ng-data_utts";
-    std::error_code utts_exists_ec;
+    std::filesystem::path mitrokun_data_path =
+        std::filesystem::path(espeak_base).parent_path() / "espeak-ng-data_mitrokun";
+    std::error_code mitrokun_exists_ec;
     if (std::getenv("PIPER_NO_AUTO_ESPEAK") == nullptr &&
-        voice_needs_utts_espeak_data(config) &&
-        std::filesystem::exists(utts_data_path, utts_exists_ec)) {
-      espeak_base = utts_data_path.string();
+        voice_needs_mitrokun_espeak_data(config) &&
+        std::filesystem::exists(mitrokun_data_path, mitrokun_exists_ec)) {
+      espeak_base = mitrokun_data_path.string();
     }
 
     if (espeak_Initialize(AUDIO_OUTPUT_SYNCHRONOUS, 0,
